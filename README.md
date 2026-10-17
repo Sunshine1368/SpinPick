@@ -1,7 +1,33 @@
-# Tauri + Vue + TypeScript
+# SpinPick
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+一个扑克牌风格的随机抽名工具，基于 Tauri 2 + Vue 3。
 
-## Recommended IDE Setup
+## 运行
 
-- [VS Code](https://code.visualstudio.com/) + [Vue - Official](https://marketplace.visualstudio.com/items?itemName=Vue.volar) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+```bash
+npm install
+npm run tauri dev
+```
+
+## 打包
+
+```bash
+npm run tauri build
+```
+
+## 使用
+
+- 点击牌堆抽一张，再次点击牌堆继续抽。
+- 拖动已抽出的牌回左上角牌堆可还原。
+- 点击已抽出的牌可平铺查看；超过 10 张时按住左右拖动浏览。
+- 从左边缘向右滑动或按 `Esc` 打开名单设置，可编辑名字和权重。
+
+## 配置文件
+
+名单保存在：
+
+```
+%APPDATA%\uno.toolkit.spinpick\names.json
+```
+
+首次运行会自动创建。
