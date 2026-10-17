@@ -1,7 +1,9 @@
 <template>
   <div
     class="wallpaper"
+    :class="{ 'is-spread-panning': spreadPanning }"
     :style="{ '--move-ms': `${moveMs}ms`, '--flip-ms': `${flipMs}ms` }"
+    @pointerdown="onWallpaperPointerDown"
   >
     <!-- 所有牌放在同一层，靠 transform 决定位置，移动时会自动补间 -->
     <div class="table-layer">
@@ -12,6 +14,7 @@
         :class="{
           'card--dragging': isCardDragging(card),
           'card--draggable': isCardDraggable(card),
+          'card--no-shadow': isCardHidden(card),
         }"
         :style="cardStyle(card)"
         @pointerdown.prevent="onCardPointerDown($event, card)"
@@ -33,10 +36,17 @@
       </div>
     </div>
 
-    <!-- 平铺查看时，点击任意位置收起 -->
-    <div v-if="spreadOpen" class="spread-backdrop" @click="closeSpread"></div>
+    <!-- 平铺查看时，点击空白收起；超过 10 张可左右拖动查看 -->
+    <div
+      v-if="spreadOpen"
+      class="spread-backdrop"
+      @pointerdown.prevent="onSpreadPointerDown"
+      @pointermove="onSpreadPointerMove"
+      @pointerup="onSpreadPointerUp"
+      @pointercancel="cancelSpreadPan"
+    ></div>
     <p v-if="spreadOpen" class="spread-hint">
-      点击空白处收起 · 把牌拖回左上角牌堆可还原
+      点击空白处收起<span v-if="spreadCount > SPREAD_PAN_COUNT"> · 按住左右拖动查看</span> · 把牌拖回左上角牌堆可还原
     </p>
 
     <!-- 拖动卡片时，左上角显示还原区域 -->
@@ -79,11 +89,101 @@
       </button>
       <span class="status">剩余 {{ deckIds.length }} 张</span>
     </div>
+
+    <!-- 屏幕左缘的热区：向右拖动可拉出菜单 -->
+    <div
+      class="edge-swipe"
+      aria-hidden="true"
+      @pointerdown.prevent="onEdgePointerDown"
+      @pointermove="onEdgePointerMove"
+      @pointerup="onEdgePointerUp"
+      @pointercancel="cancelEdgeDrag"
+    ></div>
+
+    <!-- 左侧菜单：使用 panel.svg 原样作为面板 -->
+    <aside
+      class="settings-panel"
+      :class="{ 'is-dragging': panelDragging }"
+      :style="{ transform: `translateX(${panelOffset}px)` }"
+      :aria-hidden="!panelOpen"
+      aria-label="菜单"
+      @pointerdown="onPanelPointerDown"
+      @pointermove="onPanelPointerMove"
+      @pointerup="onPanelPointerUp"
+      @pointercancel="cancelPanelDrag"
+    >
+      <div class="panel-body">
+        <header class="panel-head">
+          <h2 class="panel-title">
+            <span class="suit">♠</span>
+            名单设置
+            <span class="suit">♥</span>
+          </h2>
+          <span class="panel-count">{{ draftNames.length }} 人</span>
+        </header>
+
+        <div class="name-head" aria-hidden="true">
+          <span>名字</span>
+          <span class="is-center">权重</span>
+          <span></span>
+        </div>
+
+        <div ref="nameListEl" class="name-list">
+          <div
+            v-for="(entry, index) in draftNames"
+            :key="entry.key"
+            class="name-row"
+          >
+            <input
+              v-model="entry.name"
+              class="name-input"
+              type="text"
+              maxlength="24"
+              placeholder="姓名"
+            />
+            <input
+              v-model.number="entry.weight"
+              class="weight-input"
+              type="number"
+              min="0.1"
+              step="0.1"
+              title="权重"
+            />
+            <button
+              class="row-remove"
+              title="删除"
+              @click="removeRow(index)"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+
+        <div class="panel-actions">
+          <button class="panel-button" @click="addRow">+ 添加</button>
+          <button
+            class="panel-button primary"
+            :disabled="savingNames"
+            @click="saveNames"
+          >
+            {{ savingNames ? '保存中…' : '保存' }}
+          </button>
+        </div>
+
+        <p
+          v-if="panelMessage"
+          class="panel-message"
+          :class="{ 'is-error': panelMessageError }"
+        >
+          {{ panelMessage }}
+        </p>
+      </div>
+    </aside>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import {
   BaseDirectory,
   exists,
@@ -194,13 +294,15 @@ const DRAWN_SCALE = 0.62
 const DRAWN_MARGIN = 24
 const DRAWN_STACK_STEP = 2 // 每张牌错开 2px，形成堆叠厚度
 const DRAWN_W = CARD_W * DRAWN_SCALE
-const DRAWN_MAX_OFFSET = 6 // 偏移量最多叠加 6 层，避免戳出屏幕
+const DRAWN_MAX_OFFSET = 19 // 和牌堆一致：最多只显示 20 层错位
 
 // 平铺查看
 const SPREAD_SCALE = 0.95
 const SPREAD_MARGIN = 48
 const SPREAD_MAX_STEP = 180 // 牌少时两张牌左上角的距离，越大越稀疏
 const SPREAD_MIN_STEP = 24 // 牌多时最密能叠到多近
+const SPREAD_PAN_COUNT = 10 // 超过 10 张改用可左右拖动的长条布局
+const SPREAD_PAN_STEP = 120 // 长条布局里每张牌的横向间距
 
 // 拖动超过这个距离才算“拖出来”，否则当成点击
 const DRAG_THRESHOLD = 28
@@ -212,14 +314,17 @@ const DECK_DROP_PADDING = 40
 const FAN_STEP = 1
 const PILE_STEP = 1
 const SIDE_STEP = 3
+const DECK_OFFSET_LIMIT = 20 // 只显示前 20 层的错位，多出来的牌藏在下面
 
+// 超过 20 张后，后面的牌都用第 20 张的偏移量，完全被它挡住
 function stackOffsetX(index) {
-  return index * SIDE_STEP
+  return Math.min(index, DECK_OFFSET_LIMIT - 1) * SIDE_STEP
 }
 
 function stackOffsetY(index) {
-  if (index < 3) return index * FAN_STEP
-  return 2 * FAN_STEP + (index - 2) * PILE_STEP
+  const i = Math.min(index, DECK_OFFSET_LIMIT - 1)
+  if (i < 3) return i * FAN_STEP
+  return 2 * FAN_STEP + (i - 2) * PILE_STEP
 }
 
 /* ---------------- 抽牌音效 ---------------- */
@@ -249,6 +354,8 @@ const drawnIds = ref([]) // 已抽到右上角的牌
 const centerIds = ref([]) // 中间展示的牌（连续抽牌时会累积多张）
 const isBusy = ref(false) // 动画进行中（不再阻止新的抽牌请求）
 const spreadOpen = ref(false) // 已抽取名单是否平铺展示
+const spreadPanX = ref(0) // 平铺超过 10 张时的横向拖动量
+const spreadPanning = ref(false) // 拖动查看时临时关闭卡片过渡
 const dragCard = ref(null) // 正从牌堆拖出的牌 { id, startX, startY, dx, dy }
 const stackDrag = ref(null) // 正被拖动的已抽牌堆 { startX, startY, dx, dy }
 const spreadDrag = ref(null) // 正被拖动的单张已抽牌 { id, startX, startY, dx, dy }
@@ -276,11 +383,272 @@ const spreadCount = computed(
 
 function openSpread() {
   if (drawnIds.value.length === 0) return
+  spreadPanX.value = 0
   spreadOpen.value = true
 }
 
 function closeSpread() {
   spreadOpen.value = false
+  spreadPanX.value = 0
+  spreadPanning.value = false
+}
+
+/* ---------------- 左侧菜单：滑动拉出 ---------------- */
+const PANEL_WIDTH = 240 // 与 panel.svg 的宽度一致
+const PANEL_HIDDEN_X = -PANEL_WIDTH - 4
+const PANEL_OPEN_THRESHOLD = 80 // 拖出这么多距离就完全展开
+
+const panelOpen = ref(false) // 菜单是否完全展开
+const panelOffset = ref(PANEL_HIDDEN_X) // 当前横向位移（拖动时实时变化）
+const panelDragging = ref(false) // 拖动过程中关闭过渡，保证跟手
+
+let edgeGesture = null // 从屏幕左缘向右拖
+let panelGesture = null // 在面板上向左拖收起
+let tableSwipe = null // 在空白处向左滑
+
+function openPanel() {
+  panelOpen.value = true
+  panelOffset.value = 0
+  spreadOpen.value = false
+}
+
+function closePanel() {
+  panelOpen.value = false
+  panelOffset.value = PANEL_HIDDEN_X
+}
+
+// 左缘热区：按住向右拖，面板跟着手势滑出
+function onEdgePointerDown(event) {
+  if (panelOpen.value) return
+
+  edgeGesture = {
+    startX: event.clientX,
+    startY: event.clientY,
+    horizontal: false,
+  }
+  event.currentTarget.setPointerCapture(event.pointerId)
+}
+
+function onEdgePointerMove(event) {
+  const gesture = edgeGesture
+  if (!gesture) return
+
+  const dx = event.clientX - gesture.startX
+  const dy = event.clientY - gesture.startY
+
+  if (!gesture.horizontal) {
+    if (Math.abs(dx) < 6 || Math.abs(dx) <= Math.abs(dy)) return
+    gesture.horizontal = true
+    panelDragging.value = true
+  }
+
+  panelOffset.value = Math.max(
+    PANEL_HIDDEN_X,
+    Math.min(0, PANEL_HIDDEN_X + dx),
+  )
+}
+
+function onEdgePointerUp(event) {
+  const gesture = edgeGesture
+  if (!gesture) return
+
+  edgeGesture = null
+  panelDragging.value = false
+  releasePointer(event.currentTarget, event)
+
+  if (panelOffset.value > PANEL_HIDDEN_X + PANEL_OPEN_THRESHOLD) {
+    openPanel()
+  } else {
+    closePanel()
+  }
+}
+
+function cancelEdgeDrag(event) {
+  edgeGesture = null
+  panelDragging.value = false
+  releasePointer(event.currentTarget, event)
+  closePanel()
+}
+
+// 面板上向左拖 → 收起
+function onPanelPointerDown(event) {
+  if (!panelOpen.value) return
+  if (event.target.closest?.('button, a, input, textarea, select')) return
+
+  panelGesture = {
+    startX: event.clientX,
+    startY: event.clientY,
+    horizontal: false,
+  }
+  event.currentTarget.setPointerCapture(event.pointerId)
+}
+
+function onPanelPointerMove(event) {
+  const gesture = panelGesture
+  if (!gesture) return
+
+  const dx = Math.min(0, event.clientX - gesture.startX)
+  const dy = event.clientY - gesture.startY
+
+  if (!gesture.horizontal) {
+    if (Math.abs(dx) < 6 || Math.abs(dx) <= Math.abs(dy)) return
+    gesture.horizontal = true
+    panelDragging.value = true
+  }
+
+  panelOffset.value = Math.max(PANEL_HIDDEN_X, dx)
+}
+
+function onPanelPointerUp(event) {
+  const gesture = panelGesture
+  if (!gesture) return
+
+  panelGesture = null
+  panelDragging.value = false
+  releasePointer(event.currentTarget, event)
+
+  if (panelOffset.value < -PANEL_OPEN_THRESHOLD) {
+    closePanel()
+  } else {
+    openPanel()
+  }
+}
+
+function cancelPanelDrag(event) {
+  panelGesture = null
+  panelDragging.value = false
+  releasePointer(event.currentTarget, event)
+  if (panelOpen.value) openPanel()
+}
+
+// 在空白处向左划，也能拉出菜单
+function onWallpaperPointerDown(event) {
+  if (panelOpen.value) return
+
+  const target = event.target
+  if (
+    target instanceof Element &&
+    target.closest('button, .card--draggable, .edge-swipe, .settings-panel')
+  ) {
+    return
+  }
+
+  tableSwipe = { startX: event.clientX, startY: event.clientY }
+}
+
+// 面板展开时，点击面板外的空白处直接收起
+function onWindowPointerDown(event) {
+  if (!panelOpen.value) return
+  if (event.target instanceof Element && event.target.closest('.settings-panel')) {
+    return
+  }
+  closePanel()
+}
+
+function onWindowPointerUp(event) {
+  const swipe = tableSwipe
+  tableSwipe = null
+  if (!swipe) return
+
+  const dx = event.clientX - swipe.startX
+  const dy = event.clientY - swipe.startY
+
+  if (dx <= -70 && Math.abs(dx) > Math.abs(dy) * 1.4) openPanel()
+}
+
+function onWindowPointerCancel() {
+  tableSwipe = null
+}
+
+/* ---------------- 名单编辑：面板里修改名字和权重 ---------------- */
+const draftNames = ref([]) // 正在编辑的名单
+const nameListEl = ref(null) // 名单滚动容器
+const savingNames = ref(false)
+const panelMessage = ref('')
+const panelMessageError = ref(false)
+
+let rowSeed = 0
+let panelMessageTimer = null
+
+// 把当前生效的名单复制一份到编辑区
+function syncDraft() {
+  draftNames.value = names.value.map((entry) => ({
+    key: ++rowSeed,
+    name: entry.name,
+    weight: entry.weight,
+  }))
+}
+
+function setPanelMessage(text, isError = false) {
+  panelMessage.value = text
+  panelMessageError.value = isError
+
+  if (panelMessageTimer !== null) clearTimeout(panelMessageTimer)
+  panelMessageTimer = text
+    ? setTimeout(() => {
+        panelMessage.value = ''
+        panelMessageTimer = null
+      }, 3000)
+    : null
+}
+
+async function addRow() {
+  draftNames.value.push({ key: ++rowSeed, name: '', weight: 1 })
+  setPanelMessage('')
+
+  // 新增后滚到底部，方便直接输入
+  await nextTick()
+  if (nameListEl.value) {
+    nameListEl.value.scrollTop = nameListEl.value.scrollHeight
+  }
+}
+
+function removeRow(index) {
+  draftNames.value.splice(index, 1)
+  setPanelMessage('')
+}
+
+async function saveNames() {
+  if (savingNames.value) return
+
+  // 空名字忽略；非法权重按 1 处理
+  const cleaned = draftNames.value
+    .map((entry) => ({
+      name: String(entry.name ?? '').trim(),
+      weight: Number(entry.weight),
+    }))
+    .filter((entry) => entry.name)
+    .map((entry) => ({
+      name: entry.name,
+      weight:
+        Number.isFinite(entry.weight) && entry.weight > 0 ? entry.weight : 1,
+    }))
+
+  if (cleaned.length === 0) {
+    setPanelMessage('至少保留一个名字', true)
+    return
+  }
+
+  savingNames.value = true
+  try {
+    await mkdir('', { baseDir: BaseDirectory.AppConfig, recursive: true }).catch(
+      () => {},
+    )
+    await writeTextFile(
+      CONFIG_FILE,
+      `${JSON.stringify({ names: cleaned }, null, 2)}\n`,
+      { baseDir: BaseDirectory.AppConfig },
+    )
+
+    cancelAllDraws()
+    names.value = cleaned
+    initCards() // 立刻按新名单重新洗牌
+  } catch (error) {
+    console.error('保存名单失败：', error)
+    setPanelMessage('保存失败，请检查配置文件权限', true)
+  } finally {
+    savingNames.value = false
+  }
 }
 
 /* ---------------- 拖动交互 ---------------- */
@@ -371,6 +739,56 @@ function cancelStackDrag(event) {
   releasePointer(event.currentTarget, event)
 }
 
+/* ---------------- 平铺名单的左右拖动 ---------------- */
+let spreadPanGesture = null
+
+function onSpreadPointerDown(event) {
+  spreadPanGesture = {
+    startX: event.clientX,
+    startY: event.clientY,
+    startPan: spreadPanX.value,
+    moved: false,
+  }
+  event.currentTarget.setPointerCapture(event.pointerId)
+}
+
+function onSpreadPointerMove(event) {
+  const gesture = spreadPanGesture
+  if (!gesture) return
+
+  const dx = event.clientX - gesture.startX
+  const dy = event.clientY - gesture.startY
+
+  if (!gesture.moved && Math.hypot(dx, dy) > 8) {
+    gesture.moved = true
+    spreadPanning.value = true
+  }
+  if (!gesture.moved) return
+
+  // 超过 10 张时整排超出屏幕，左右拖动查看
+  if (spreadCount.value > SPREAD_PAN_COUNT) {
+    spreadPanX.value = clampSpreadPan(gesture.startPan + dx)
+  }
+}
+
+function onSpreadPointerUp(event) {
+  const gesture = spreadPanGesture
+  if (!gesture) return
+
+  spreadPanGesture = null
+  spreadPanning.value = false
+  releasePointer(event.currentTarget, event)
+
+  // 没有拖动就算点击，收起平铺
+  if (!gesture.moved) closeSpread()
+}
+
+function cancelSpreadPan(event) {
+  spreadPanGesture = null
+  spreadPanning.value = false
+  releasePointer(event.currentTarget, event)
+}
+
 /* ---------------- 单张牌的拖动：拖回牌堆即还原 ---------------- */
 function isPointOverDeck(x, y) {
   return (
@@ -400,6 +818,9 @@ function onCardPointerDown(event, card) {
     startY: event.clientY,
     dx: 0,
     dy: 0,
+    mode: null, // null / 'card' / 'pan'
+    panStart: 0,
+    panX: 0,
   }
   event.currentTarget.setPointerCapture(event.pointerId)
 }
@@ -408,13 +829,50 @@ function onCardPointerMove(event) {
   const drag = spreadDrag.value
   if (!drag) return
 
-  drag.dx = event.clientX - drag.startX
-  drag.dy = event.clientY - drag.startY
+  const dx = event.clientX - drag.startX
+  const dy = event.clientY - drag.startY
+
+  // 判断这一次是“左右拖动查看”还是“把牌拖回牌堆”
+  if (!drag.mode) {
+    if (Math.hypot(dx, dy) < 6) return
+
+    if (
+      spreadOpen.value &&
+      spreadCount.value > SPREAD_PAN_COUNT &&
+      Math.abs(dx) > Math.abs(dy) * 1.5
+    ) {
+      drag.mode = 'pan'
+      drag.panStart = spreadPanX.value
+      drag.panX = event.clientX
+      spreadPanning.value = true
+      return
+    }
+
+    drag.mode = 'card'
+  }
+
+  if (drag.mode === 'pan') {
+    spreadPanX.value = clampSpreadPan(
+      drag.panStart + (event.clientX - drag.panX),
+    )
+    return
+  }
+
+  drag.dx = dx
+  drag.dy = dy
 }
 
 function onCardPointerUp(event) {
   const drag = spreadDrag.value
   if (!drag) return
+
+  // 左右拖动只滚动名单，不移动这张牌
+  if (drag.mode === 'pan') {
+    spreadDrag.value = null
+    spreadPanning.value = false
+    releasePointer(event.currentTarget, event)
+    return
+  }
 
   const distance = Math.hypot(drag.dx, drag.dy)
   const overDeck = isPointOverDeck(event.clientX, event.clientY)
@@ -434,6 +892,7 @@ function onCardPointerUp(event) {
 
 function cancelCardDrag(event) {
   spreadDrag.value = null
+  spreadPanning.value = false
   releasePointer(event.currentTarget, event)
 }
 
@@ -479,7 +938,11 @@ function restoreAllDrawn() {
 }
 
 function onKeydown(event) {
-  if (event.key === 'Escape' && spreadOpen.value) {
+  if (event.key !== 'Escape') return
+
+  if (panelOpen.value) {
+    closePanel()
+  } else if (spreadOpen.value) {
     closeSpread()
   }
 }
@@ -487,11 +950,18 @@ function onKeydown(event) {
 onMounted(() => {
   window.addEventListener('resize', updateViewport)
   window.addEventListener('keydown', onKeydown)
+  window.addEventListener('pointerdown', onWindowPointerDown)
+  window.addEventListener('pointerup', onWindowPointerUp)
+  window.addEventListener('pointercancel', onWindowPointerCancel)
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', updateViewport)
   window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('pointerdown', onWindowPointerDown)
+  window.removeEventListener('pointerup', onWindowPointerUp)
+  window.removeEventListener('pointercancel', onWindowPointerCancel)
+  if (panelMessageTimer !== null) clearTimeout(panelMessageTimer)
 })
 
 /* ---------------- 洗牌与初始化 ---------------- */
@@ -518,6 +988,9 @@ function initCards() {
   deckIds.value = cards.value.map((card) => card.id)
   drawnIds.value = []
   centerIds.value = []
+
+  // 编辑区同步当前生效的名单
+  syncDraft()
 }
 
 // 先用内置名单立即初始化，保证界面不会空白
@@ -527,11 +1000,36 @@ initCards()
 loadNames()
 
 /* ---------------- 平铺位置：数量越多，间距越小 ---------------- */
+// 超过 10 张时排成一条长龙，可左右拖动查看
+function spreadPanLimit() {
+  const count = spreadCount.value
+  if (count <= SPREAD_PAN_COUNT) return 0
+
+  const rowWidth = (count - 1) * SPREAD_PAN_STEP + CARD_W * SPREAD_SCALE
+  return Math.max(0, (rowWidth - (viewportWidth.value - SPREAD_MARGIN * 2)) / 2)
+}
+
+function clampSpreadPan(value) {
+  const limit = spreadPanLimit()
+  return Math.min(limit, Math.max(-limit, value))
+}
+
 function spreadTransform(index, count, dragX = 0, dragY = 0) {
   const cardW = CARD_W * SPREAD_SCALE
   const cardH = CARD_H * SPREAD_SCALE
 
-  // 先看“牌少时”的大间距能不能放下；放不下就自动压缩
+  // 牌多时用固定间距铺开，整条可以左右拖动
+  if (count > SPREAD_PAN_COUNT) {
+    const rowWidth = (count - 1) * SPREAD_PAN_STEP + cardW
+    const rowLeft =
+      (viewportWidth.value - rowWidth) / 2 + clampSpreadPan(spreadPanX.value)
+
+    return `translate(${
+      rowLeft + index * SPREAD_PAN_STEP + dragX
+    }px, calc(50vh + ${dragY - cardH / 2}px)) scale(${SPREAD_SCALE})`
+  }
+
+  // 牌少时：先看大间距能不能放下；放不下就自动压缩
   const available = viewportWidth.value - SPREAD_MARGIN * 2
   const fitStep = count > 1 ? (available - cardW) / (count - 1) : 0
   const step =
@@ -630,7 +1128,9 @@ function cardStyle(card) {
   // 拖动中的牌要浮在最上面
   if (dragCard.value?.id === card.id) zIndex = 550
   if (stackDrag.value && drawnIndex !== -1) zIndex = 560 + drawnIndex
-  if (spreadDrag.value?.id === card.id) zIndex = 700
+  if (spreadDrag.value?.id === card.id && spreadDrag.value.mode !== 'pan') {
+    zIndex = 700
+  }
 
   return { transform, zIndex }
 }
@@ -639,6 +1139,13 @@ function isCardDragging(card) {
   if (dragCard.value?.id === card.id) return true
   if (spreadDrag.value?.id === card.id) return true
   return Boolean(stackDrag.value) && drawnIds.value.includes(card.id)
+}
+
+// 牌堆 / 已抽牌堆里第 20 张之后的牌被完全挡住，不用再渲染阴影
+function isCardHidden(card) {
+  if (deckIds.value.indexOf(card.id) >= DECK_OFFSET_LIMIT) return true
+  if (spreadOpen.value) return false
+  return drawnIds.value.indexOf(card.id) >= DECK_OFFSET_LIMIT
 }
 
 /* ---------------- 动画小工具 ---------------- */
@@ -654,6 +1161,19 @@ function clearFinalizeTimer() {
     clearTimeout(finalizeTimer)
     finalizeTimer = null
   }
+}
+
+// 中断所有排队 / 进行中的抽牌，回到静止状态
+function cancelAllDraws() {
+  runId++
+  clearFinalizeTimer()
+  drawQueue.value = []
+  burstActive.value = false
+  processing.value = false
+  isBusy.value = false
+  lastRequestAt = 0
+  moveMs.value = MOVE_MS
+  flipMs.value = FLIP_MS
 }
 
 /* ---------------- 抽牌请求：慢点原速，快点加速，再快就排队 ---------------- */
@@ -802,16 +1322,9 @@ function finalizeBurst() {
 }
 
 async function reset() {
-  runId++
-  clearFinalizeTimer()
-  drawQueue.value = []
-  burstActive.value = false
-  processing.value = false
-  isBusy.value = false
-  lastRequestAt = 0
-  moveMs.value = MOVE_MS
-  flipMs.value = FLIP_MS
+  cancelAllDraws()
   spreadOpen.value = false
+  closePanel()
 
   // 重新读取外部文件，用户改完 names.json 后点「重开」即可生效
   await loadNames()
@@ -953,6 +1466,16 @@ async function reset() {
   transition: none;
 }
 
+/* 左右拖动查看名单时，所有牌都不要过渡，保证跟手 */
+.is-spread-panning .card {
+  transition: none;
+}
+
+/* 牌堆里被压住的牌不再叠加阴影 */
+.card--no-shadow .card-face {
+  box-shadow: none;
+}
+
 /* 只有能拖动的牌才接收指针事件（table-layer 默认关闭了） */
 .card--draggable {
   pointer-events: auto;
@@ -1063,24 +1586,50 @@ async function reset() {
 
 .controls button {
   padding: 8px 18px;
-  border: 1px solid rgb(201 162 39 / 45%);
-  border-radius: 8px;
-  background: rgb(20 23 31 / 75%);
-  color: #f2ead8;
+  border: 0;
+  border-radius: 9px;
+  background:
+    repeating-linear-gradient(
+      45deg,
+      rgb(70 50 30 / 40%) 0px,
+      rgb(70 50 30 / 40%) 2px,
+      rgb(110 80 50 / 30%) 2px,
+      rgb(110 80 50 / 30%) 6px
+    ),
+    radial-gradient(circle at 20% 30%, #6b4f2e, #3b2b1a 85%);
+  color: #f7e9c3;
   font: inherit;
+  font-size: 13px;
+  letter-spacing: 1px;
+  text-shadow:
+    0 2px 3px rgb(0 0 0 / 50%),
+    0 1px 0 #3a2e1e;
+  box-shadow:
+    0 8px 12px -5px #0b1a12,
+    0 0 0 1px #7c6a4b inset,
+    0 0 0 2px #2d2418 inset;
   cursor: pointer;
   transition:
-    background 150ms ease,
     transform 150ms ease,
+    box-shadow 150ms ease,
     opacity 150ms ease;
 }
 
 .controls button:hover:not(:disabled) {
-  background: rgb(30 35 46 / 90%);
+  transform: translateY(-2px);
+  box-shadow:
+    0 16px 20px -6px #0b1a12,
+    0 0 0 1px #b8a47a inset,
+    0 0 0 2px #3d2f1c inset;
 }
 
 .controls button:active:not(:disabled) {
-  transform: scale(0.96);
+  transform: translateY(2px);
+  box-shadow:
+    0 5px 8px -3px #0b1a12,
+    0 0 0 1px #7c6a4b inset,
+    0 0 0 2px #1f170e inset;
+  transition-duration: 0.05s;
 }
 
 .controls button:disabled {
@@ -1092,5 +1641,306 @@ async function reset() {
   margin-left: 4px;
   color: var(--color-muted);
   font-size: 13px;
+}
+
+/* ---------------- 左侧菜单 ---------------- */
+/* 屏幕左缘的透明拖动热区 */
+.edge-swipe {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 880;
+  width: 18px;
+  height: 100vh;
+  cursor: e-resize;
+  touch-action: none;
+}
+
+/* 面板本身：完全使用 panel.svg 的样式，不加额外装饰 */
+.settings-panel {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  width: 240px;
+  height: 100vh;
+  padding: 30px 18px 20px;
+  overflow: hidden;
+  background: url('./assets/panel.svg') left top / 100% 100% no-repeat;
+  transform: translateX(-244px);
+  transition: transform var(--duration-drawer) var(--ease-main);
+  user-select: none;
+  touch-action: pan-y;
+}
+
+/* 跟手拖动时不要过渡 */
+.settings-panel.is-dragging {
+  transition: none;
+}
+
+.panel-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgb(201 162 39 / 18%);
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: #bdae8b;
+  font-family: var(--font-card);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 3px;
+  text-shadow: 0 1px 3px black;
+}
+
+.panel-title .suit {
+  color: #d4b87a;
+  font-size: 14px;
+  letter-spacing: 0;
+  text-shadow: 0 1px 2px black;
+}
+
+.panel-count {
+  color: #bdae8b;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* 列表表头与每一行共用同样的列宽，保证对齐 */
+.name-head,
+.name-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 46px 24px;
+  gap: 6px;
+  align-items: center;
+}
+
+.name-head {
+  padding: 12px 2px 6px;
+  color: #bdae8b;
+  font-size: 10px;
+  letter-spacing: 2px;
+  opacity: 0.7;
+}
+
+.name-head .is-center {
+  text-align: center;
+}
+
+.name-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0 -6px;
+  padding: 0 6px 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.name-row {
+  margin-bottom: 8px;
+}
+
+.name-input,
+.weight-input {
+  height: 32px;
+  min-width: 0;
+  border: 0;
+  border-radius: 8px;
+  background:
+    repeating-linear-gradient(
+      45deg,
+      rgb(70 50 30 / 40%) 0px,
+      rgb(70 50 30 / 40%) 2px,
+      rgb(110 80 50 / 30%) 2px,
+      rgb(110 80 50 / 30%) 6px
+    ),
+    radial-gradient(circle at 20% 30%, #6b4f2e, #3b2b1a 85%);
+  color: #f7e9c3;
+  font: inherit;
+  font-size: 13px;
+  text-shadow: 0 1px 2px black;
+  caret-color: #f5d742;
+  outline: none;
+  box-shadow:
+    0 4px 7px -3px #0b1a12,
+    0 0 0 1px #7c6a4b inset,
+    0 0 0 2px #2d2418 inset;
+  transition: box-shadow 150ms ease;
+}
+
+.name-input {
+  padding: 0 8px;
+}
+
+.weight-input {
+  padding: 0 2px;
+  text-align: center;
+}
+
+.name-input:hover,
+.weight-input:hover {
+  box-shadow:
+    0 6px 10px -4px #0b1a12,
+    0 0 0 1px #b8a47a inset,
+    0 0 0 2px #3d2f1c inset;
+}
+
+.name-input:focus,
+.weight-input:focus {
+  box-shadow:
+    0 0 0 2px #f5d742,
+    0 0 12px rgb(245 215 66 / 50%),
+    0 0 0 1px #cabf9e inset;
+}
+
+.name-input::placeholder {
+  color: #bdae8b;
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.settings-panel input {
+  user-select: text;
+}
+
+/* 细滚动条，贴合木质面板 */
+.name-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.name-list::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: rgb(201 162 39 / 30%);
+}
+
+.name-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.row-remove {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #c9a45c;
+  color: #0f0f0f;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  text-shadow: 0 1px 0 #e6d8b5;
+  box-shadow:
+    0 0 0 2px #3b2b1a,
+    0 2px 3px black;
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    transform 150ms ease;
+}
+
+.row-remove:hover {
+  background: #e0b96b;
+  transform: translateY(-1px);
+}
+
+.row-remove:active {
+  transform: translateY(1px);
+}
+
+.panel-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.panel-button {
+  flex: 1;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 9px;
+  background:
+    repeating-linear-gradient(
+      45deg,
+      rgb(70 50 30 / 40%) 0px,
+      rgb(70 50 30 / 40%) 2px,
+      rgb(110 80 50 / 30%) 2px,
+      rgb(110 80 50 / 30%) 6px
+    ),
+    radial-gradient(circle at 20% 30%, #6b4f2e, #3b2b1a 85%);
+  color: #f7e9c3;
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: 1px;
+  text-shadow:
+    0 2px 3px rgb(0 0 0 / 50%),
+    0 1px 0 #3a2e1e;
+  box-shadow:
+    0 8px 12px -5px #0b1a12,
+    0 0 0 1px #7c6a4b inset,
+    0 0 0 2px #2d2418 inset;
+  cursor: pointer;
+  transition:
+    transform 150ms ease,
+    box-shadow 150ms ease,
+    opacity 150ms ease;
+}
+
+.panel-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow:
+    0 16px 20px -6px #0b1a12,
+    0 0 0 1px #b8a47a inset,
+    0 0 0 2px #3d2f1c inset;
+}
+
+.panel-button:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow:
+    0 5px 8px -3px #0b1a12,
+    0 0 0 1px #7c6a4b inset,
+    0 0 0 2px #1f170e inset;
+  transition-duration: 0.05s;
+}
+
+.panel-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.panel-button.primary {
+  box-shadow:
+    0 8px 12px -5px #0b1a12,
+    0 0 0 1px #b8a47a inset,
+    0 0 0 2px #2d2418 inset,
+    0 0 14px rgb(245 215 66 / 18%);
+}
+
+.panel-message {
+  margin: 10px 0 0;
+  color: #c9a227;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.panel-message.is-error {
+  color: var(--color-danger);
 }
 </style>

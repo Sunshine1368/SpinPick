@@ -1,3 +1,28 @@
+/* Google Sans，本地打包，离线也能用 */
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/google-sans-latin.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('./assets/fonts/google-sans-latin.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./assets/fonts/google-sans-latin.woff2') format('woff2');
+}
+
 :root {
   color-scheme: dark;
   --color-bg: #0b0e14;
@@ -20,8 +45,10 @@
   --ease-main: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-out: ease-out;
-  --font-ui: 'Source Han Sans SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
-  --font-card: 'Source Han Serif SC', 'Noto Serif SC', 'SimSun', serif;
+  --font-ui: 'Google Sans', 'Noto Sans SC', 'Microsoft YaHei', 'PingFang SC',
+    sans-serif;
+  --font-card: 'Google Sans', 'Noto Sans SC', 'Microsoft YaHei', 'PingFang SC',
+    sans-serif;
   font-family: var(--font-ui);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
