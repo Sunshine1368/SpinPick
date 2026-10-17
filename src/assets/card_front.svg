@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="280" viewBox="0 0 200 280">
+  <defs>
+    <linearGradient id="paperGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fffdf8"/>
+      <stop offset="100%" stop-color="#f0ece2"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 牌面阴影 -->
+  <rect x="6" y="6" width="192" height="272" rx="12" ry="12" fill="#000000" opacity="0.12"/>
+
+  <!-- 牌面底色 -->
+  <rect x="3" y="3" width="194" height="274" rx="12" ry="12"
+        fill="url(#paperGrad)" stroke="#d4d0c8" stroke-width="1.5"/>
+
+  <!-- 内细边框 -->
+  <rect x="12" y="12" width="176" height="256" rx="6" ry="6"
+        fill="none" stroke="#c9a84c" stroke-width="0.6" opacity="0.3"/>
+</svg>

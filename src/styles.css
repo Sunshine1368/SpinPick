@@ -1,0 +1,36 @@
+:root {
+  color-scheme: dark;
+  --color-bg: #0b0e14;
+  --color-panel: #14171f;
+  --color-card-back: #1c2029;
+  --color-gold: #c9a227;
+  --color-text: #f2ead8;
+  --color-muted: #6b6f7a;
+  --color-gold-line: rgb(201 162 39 / 25%);
+  --color-gold-soft: rgb(201 162 39 / 50%);
+  --color-gold-faint: rgb(201 162 39 / 15%);
+  --color-card-shadow: rgb(0 0 0 / 42%);
+  --color-card-ink: #362f24;
+  --color-focus: rgb(242 234 216 / 80%);
+  --color-danger: #c86f62;
+  --color-danger-soft: rgb(200 111 98 / 18%);
+  --duration-fast: 150ms;
+  --duration-control: 200ms;
+  --duration-drawer: 400ms;
+  --ease-main: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out: ease-out;
+  --font-ui: 'Source Han Sans SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+  --font-card: 'Source Han Serif SC', 'Noto Serif SC', 'SimSun', serif;
+  font-family: var(--font-ui);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+* { box-sizing: border-box; }
+html, body, #app { width: 100%; min-width: 320px; min-height: 100%; margin: 0; }
+body { min-height: 100vh; overflow: hidden; }
+button { font: inherit; }
+button:focus-visible { outline: 1px solid var(--color-focus); outline-offset: 3px; }

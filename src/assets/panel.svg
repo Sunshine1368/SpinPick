@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 600" width="240" height="600">
+  <defs>
+    <linearGradient id="woodBase" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#14110E"/>
+      <stop offset="50%" stop-color="#1C1814"/>
+      <stop offset="100%" stop-color="#14110E"/>
+    </linearGradient>
+
+    <pattern id="fineGrain" x="0" y="0" width="20" height="600" patternUnits="userSpaceOnUse">
+      <line x1="4" y1="0" x2="4" y2="600" stroke="#2A231A" stroke-width="0.6" opacity="0.15"/>
+      <line x1="14" y1="0" x2="14" y2="600" stroke="#2A231A" stroke-width="0.4" opacity="0.12"/>
+    </pattern>
+
+    <radialGradient id="cornerLight" cx="0%" cy="0%" r="70%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+
+    <clipPath id="boardClip">
+      <path d="M0,0 H228 A12,12 0 0 1 240,12 V588 A12,12 0 0 1 228,600 H0 Z"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#boardClip)">
+    <rect x="0" y="0" width="240" height="600" fill="url(#woodBase)"/>
+    <rect x="0" y="0" width="240" height="600" fill="url(#fineGrain)"/>
+    <rect x="0" y="0" width="240" height="600" fill="url(#cornerLight)"/>
+  </g>
+
+  <path d="M0,0.5 H227.5 A11.5,11.5 0 0 1 239.5,12 V588 A11.5,11.5 0 0 1 227.5,599.5 H0"
+        fill="none" stroke="#C9A227" stroke-width="1" opacity="0.2"/>
+</svg>
