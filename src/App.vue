@@ -134,6 +134,7 @@
         <div class="name-head" aria-hidden="true">
           <span>名字</span>
           <span class="is-center">权重</span>
+          <span class="is-center">特效</span>
           <span></span>
         </div>
 
@@ -157,6 +158,13 @@
               min="0.1"
               step="0.1"
               title="权重"
+            />
+            <input
+              v-model="entry.effect"
+              class="effect-input"
+              type="checkbox"
+              title="抽中后播放全屏特效"
+              aria-label="抽中后播放特效"
             />
             <button
               class="row-remove"
@@ -188,6 +196,48 @@
         </p>
       </div>
     </aside>
+
+    <!-- 抽中带特效的名字时，全屏播放视频，点击可跳过 -->
+    <video
+      v-if="effectActive"
+      ref="effectVideoEl"
+      class="effect-video"
+      :src="tigerVideoUrl"
+      autoplay
+      playsinline
+      @pointerdown.stop
+      @click.stop="closeEffect"
+      @timeupdate="onEffectTimeUpdate"
+      @ended="closeEffect"
+      @error="closeEffect"
+    ></video>
+
+    <!-- 中奖文字：全屏大小 → 缩到中央那张牌 -->
+    <div
+      v-if="announcement"
+      class="announce"
+      :class="`is-${announcement.phase}`"
+      :style="{ '--announce-size': announceSize }"
+      aria-live="assertive"
+    >
+      <span
+        v-for="(line, lineIndex) in announceLines"
+        :key="lineIndex"
+        class="announce-line"
+        :class="{ 'announce-bang': lineIndex === 2 }"
+      >
+        <span
+          v-for="(item, charIndex) in line"
+          :key="charIndex"
+          class="announce-char"
+          :style="{
+            '--char-delay': `${item.delay}ms`,
+            '--char-duration': `${ANNOUNCE_CHAR_MS}ms`,
+          }"
+          >{{ item.char }}</span
+        >
+      </span>
+    </div>
   </div>
 </template>
 
@@ -205,6 +255,7 @@ import cardFrontUrl from './assets/card_front.svg'
 import pickCard1Url from './assets/pick_card_1.mp3'
 import pickCard2Url from './assets/pick_card_2.mp3'
 import placeCardUrl from './assets/place_card.mp3'
+import tigerVideoUrl from './assets/lie_qi_tiger.mp4'
 import defaultConfig from './config.json'
 
 /* ------------- 名字列表：优先读取程序外部配置文件 ------------- */
@@ -212,8 +263,8 @@ const CONFIG_FILE = 'names.json'
 const defaultNames = defaultConfig.names
 
 // 支持两种写法：
-//   1. "张三"                          → 权重 1
-//   2. { "name": "张三", "weight": 2 } → 权重 2，更容易被抽到
+//   1. "张三"                                      → 权重 1，无特效
+//   2. { "name": "张三", "weight": 2, "effect": true } → 权重 2，抽中播放特效
 function parseNames(json) {
   const list = Array.isArray(json) ? json : json?.names
   if (!Array.isArray(list) || list.length === 0) {
@@ -222,7 +273,7 @@ function parseNames(json) {
 
   return list.map((item) => {
     if (typeof item === 'string') {
-      return { name: item, weight: 1 }
+      return { name: item, weight: 1, effect: false }
     }
 
     const name = String(item?.name ?? '').trim()
@@ -232,7 +283,7 @@ function parseNames(json) {
     const weight =
       Number.isFinite(rawWeight) && rawWeight > 0 ? rawWeight : 1
 
-    return { name, weight }
+    return { name, weight, effect: Boolean(item?.effect) }
   })
 }
 
@@ -354,6 +405,94 @@ placeSound.preload = 'auto'
 function playPlaceSound() {
   placeSound.currentTime = 0
   placeSound.play().catch(() => {})
+}
+
+/* ---------------- 抽中特效：全屏播放视频 + 中奖文字 ---------------- */
+const effectActive = ref(false)
+const effectVideoEl = ref(null)
+
+const ANNOUNCE_SHRINK_MS = 700 // 视频结束前，文字缩小并随之消失
+const ANNOUNCE_CHAR_MS = 1000 // 每个字从超大缩到正常字号的时长
+const ANNOUNCE_STAGGER_MS = 130 // 相邻两个字的出场间隔
+const announcement = ref(null) // { name, phase: 'enter' | 'big' | 'shrink' }
+
+// 名字越长字号越小，保证三行文字都不会超出屏幕
+const announceSize = computed(() => {
+  const length = Math.max(announcement.value?.name?.length ?? 0, 5)
+  const vw = Math.min(14, 96 / length)
+  return `clamp(44px, min(${vw.toFixed(2)}vw, 20vh), 240px)`
+})
+
+// 逐字拆开，方便一个字一个字出场
+const announceLines = computed(() => {
+  const lines = [announcement.value?.name ?? '', '你被抽中了', '!!!']
+  let order = 0
+  return lines.map((text) =>
+    Array.from(text).map((char) => ({
+      char,
+      delay: order++ * ANNOUNCE_STAGGER_MS,
+    })),
+  )
+})
+let announceRaf = 0
+
+function clearAnnouncement() {
+  cancelAnimationFrame(announceRaf)
+  announceRaf = 0
+  announcement.value = null
+}
+
+function showAnnouncement(name) {
+  clearAnnouncement()
+  announcement.value = { name, phase: 'enter' }
+
+  // 先渲染初始状态，下一帧再切换，缩放入场才有过渡
+  nextTick(() => {
+    announceRaf = requestAnimationFrame(() => {
+      if (!announcement.value) return
+      announcement.value.phase = 'big'
+    })
+  })
+}
+
+// 文字一直保持全屏大小，直到视频快结束时才缩小，和视频一起消失
+function onEffectTimeUpdate(event) {
+  const video = event.currentTarget
+  if (!announcement.value || announcement.value.phase === 'shrink') return
+
+  const remaining = (video.duration - video.currentTime) * 1000
+  if (Number.isFinite(remaining) && remaining <= ANNOUNCE_SHRINK_MS) {
+    announcement.value.phase = 'shrink'
+  }
+}
+
+function playEffect(name) {
+  if (effectActive.value) return
+
+  effectActive.value = true
+  showAnnouncement(name)
+
+  nextTick(() => {
+    const video = effectVideoEl.value
+    if (!video) return
+
+    video.currentTime = 0
+    // 桌面端一般允许有声自动播放；被拦截时静音重试，保证特效一定能出来
+    video.play().catch(() => {
+      video.muted = true
+      video.play().catch(() => {})
+    })
+  })
+}
+
+function closeEffect() {
+  const video = effectVideoEl.value
+  if (video) {
+    video.pause()
+    video.currentTime = 0
+  }
+  clearAnnouncement()
+  effectActive.value = false
 }
 
 /* ---------------- 游戏状态 ---------------- */
@@ -586,6 +725,7 @@ function syncDraft() {
     key: ++rowSeed,
     name: entry.name,
     weight: entry.weight,
+    effect: Boolean(entry.effect),
   }))
 }
 
@@ -608,7 +748,12 @@ function addFromInput() {
 }
 
 async function addRow() {
-  draftNames.value.push({ key: ++rowSeed, name: newName.value.trim(), weight: 1 })
+  draftNames.value.push({
+    key: ++rowSeed,
+    name: newName.value.trim(),
+    weight: 1,
+    effect: false,
+  })
   newName.value = ''
   setPanelMessage('')
 
@@ -632,12 +777,14 @@ async function saveNames() {
     .map((entry) => ({
       name: String(entry.name ?? '').trim(),
       weight: Number(entry.weight),
+      effect: Boolean(entry.effect),
     }))
     .filter((entry) => entry.name)
     .map((entry) => ({
       name: entry.name,
       weight:
         Number.isFinite(entry.weight) && entry.weight > 0 ? entry.weight : 1,
+      effect: Boolean(entry.effect),
     }))
 
   if (cleaned.length === 0) {
@@ -999,6 +1146,7 @@ function initCards() {
     id: index + 1,
     name: entry.name,
     weight: entry.weight,
+    effect: entry.effect,
     flipped: false,
   }))
   deckIds.value = cards.value.map((card) => card.id)
@@ -1183,6 +1331,7 @@ function clearFinalizeTimer() {
 function cancelAllDraws() {
   runId++
   clearFinalizeTimer()
+  clearAnnouncement()
   drawQueue.value = []
   burstActive.value = false
   processing.value = false
@@ -1268,6 +1417,7 @@ async function performDraw(request) {
 
     // 连续抽牌时不落地再翻，直接边飞边翻，节省时间
     card.flipped = true
+    if (card.effect) playEffect(card.name)
     await wait(Math.max(speedMove, speedFlip))
     return
   }
@@ -1289,6 +1439,7 @@ async function performDraw(request) {
     // 等它到位后翻面
     await wait(speedMove)
     card.flipped = true
+    if (card.effect) playEffect(card.name)
     await wait(speedFlip)
   } else {
     // 牌堆空了，只把中间的牌送去右上角
@@ -1339,6 +1490,7 @@ function finalizeBurst() {
 
 async function reset() {
   cancelAllDraws()
+  closeEffect()
   spreadOpen.value = false
   closePanel()
 
@@ -1785,7 +1937,7 @@ async function reset() {
 .name-head,
 .name-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 62px 30px;
+  grid-template-columns: minmax(0, 1fr) 52px 44px 30px;
   gap: 8px;
   align-items: center;
 }
@@ -1837,6 +1989,51 @@ async function reset() {
   text-align: center;
   font-size: 14px;
   font-variant-numeric: tabular-nums;
+}
+
+/* 特效开关：金色勾选 */
+.settings-panel .effect-input {
+  position: relative;
+  justify-self: center;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease;
+}
+
+.settings-panel .effect-input:hover {
+  border-color: var(--gold);
+}
+
+/* 勾选后保持金色：必须压过 .settings-panel input:focus 的深色背景 */
+.settings-panel .effect-input:checked,
+.settings-panel .effect-input:checked:focus {
+  border-color: var(--gold-light);
+  background: var(--gold);
+}
+
+.settings-panel .effect-input:checked::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 6px;
+  width: 5px;
+  height: 10px;
+  border: solid #211b10;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.settings-panel .effect-input:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
 }
 
 /* 删除：默认安静，悬停才强调 */
@@ -1923,5 +2120,96 @@ async function reset() {
 
 .panel-message.is-error {
   color: var(--color-danger);
+}
+
+/* 抽中特效时的全屏视频 */
+.effect-video {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  width: 100vw;
+  height: 100vh;
+  background: black;
+  object-fit: cover;
+  cursor: pointer;
+}
+
+/* 中奖文字：先铺满屏幕，再缩向中央的牌 */
+.announce {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 2001;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.24em;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  transform-origin: center center;
+  font-size: var(--announce-size);
+}
+
+.announce.is-shrink {
+  transform: translate(-50%, -50%) scale(0.16);
+  opacity: 0;
+  transition:
+    transform 700ms cubic-bezier(0.55, 0.06, 0.68, 0.19),
+    opacity 420ms ease-in 280ms;
+}
+
+/* 每个字从超大字号慢慢缩回正常大小 */
+.announce-char {
+  display: inline-block;
+  color: transparent;
+  background-image: linear-gradient(
+    180deg,
+    #ff6a2e 0%,
+    #f21a09 42%,
+    #c00c02 100%
+  );
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-stroke: 0.08em #ffd34d;
+  paint-order: stroke fill;
+  font-family: '华文琥珀', STHupo, YouYuan, 'Microsoft YaHei', 'Noto Sans SC',
+    sans-serif;
+  font-weight: 900;
+  line-height: 1.06;
+  letter-spacing: 0.05em;
+  filter:
+    drop-shadow(0 0 0.04em #7c0d00)
+    drop-shadow(0 0 0.12em rgb(255 110 0 / 85%))
+    drop-shadow(0 0 0.35em rgb(255 50 0 / 60%));
+  transform: scale(1);
+  transform-origin: center center;
+  will-change: transform, opacity;
+}
+
+.announce.is-enter .announce-char {
+  opacity: 0;
+  transform: scale(3.6);
+}
+
+.announce.is-big .announce-char {
+  animation: announce-char-in var(--char-duration)
+    cubic-bezier(0.16, 0.84, 0.28, 1) var(--char-delay) both;
+}
+
+@keyframes announce-char-in {
+  from {
+    opacity: 0;
+    transform: scale(3.6);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.announce-line {
+  display: block;
+  text-align: center;
+  white-space: nowrap;
 }
 </style>
