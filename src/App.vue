@@ -122,6 +122,15 @@
           <span class="panel-count">{{ draftNames.length }} 人</span>
         </header>
 
+        <input
+          v-model="newName"
+          class="add-input"
+          type="text"
+          maxlength="24"
+          placeholder="输入姓名，按回车添加"
+          @keydown.enter="addFromInput"
+        />
+
         <div class="name-head" aria-hidden="true">
           <span>名字</span>
           <span class="is-center">权重</span>
@@ -159,16 +168,16 @@
           </div>
         </div>
 
-        <div class="panel-actions">
-          <button class="panel-button" @click="addRow">+ 添加</button>
+        <footer class="panel-actions">
+          <button class="btn btn-secondary" @click="addRow">＋ 添加</button>
           <button
-            class="panel-button primary"
+            class="btn btn-primary"
             :disabled="savingNames"
             @click="saveNames"
           >
             {{ savingNames ? '保存中…' : '保存' }}
           </button>
-        </div>
+        </footer>
 
         <p
           v-if="panelMessage"
@@ -394,8 +403,8 @@ function closeSpread() {
 }
 
 /* ---------------- 左侧菜单：滑动拉出 ---------------- */
-const PANEL_WIDTH = 240 // 与 panel.svg 的宽度一致
-const PANEL_HIDDEN_X = -PANEL_WIDTH - 4
+const PANEL_WIDTH = 332 // 与面板设计稿宽度一致
+const PANEL_HIDDEN_X = -PANEL_WIDTH - 4 // 完全移出屏幕
 const PANEL_OPEN_THRESHOLD = 80 // 拖出这么多距离就完全展开
 
 const panelOpen = ref(false) // 菜单是否完全展开
@@ -562,6 +571,7 @@ function onWindowPointerCancel() {
 
 /* ---------------- 名单编辑：面板里修改名字和权重 ---------------- */
 const draftNames = ref([]) // 正在编辑的名单
+const newName = ref('') // 顶部快速添加输入框
 const nameListEl = ref(null) // 名单滚动容器
 const savingNames = ref(false)
 const panelMessage = ref('')
@@ -592,8 +602,14 @@ function setPanelMessage(text, isError = false) {
     : null
 }
 
+function addFromInput() {
+  if (!newName.value.trim()) return
+  addRow()
+}
+
 async function addRow() {
-  draftNames.value.push({ key: ++rowSeed, name: '', weight: 1 })
+  draftNames.value.push({ key: ++rowSeed, name: newName.value.trim(), weight: 1 })
+  newName.value = ''
   setPanelMessage('')
 
   // 新增后滚到底部，方便直接输入
@@ -1656,20 +1672,32 @@ async function reset() {
   touch-action: none;
 }
 
-/* 面板本身：完全使用 panel.svg 的样式，不加额外装饰 */
+/* 左侧菜单：悬浮式面板，样式对齐设计稿 */
 .settings-panel {
+  --panel: #191813;
+  --surface: #242119;
+  --surface-focus: #29251d;
+  --border: #49402f;
+  --gold: #c9a45e;
+  --gold-light: #d7b977;
+  --text: #e7dcc3;
+  --muted: #958a73;
+
   position: fixed;
   top: 0;
+  bottom: 0;
   left: 0;
   z-index: 900;
   display: flex;
   flex-direction: column;
-  width: 240px;
-  height: 100vh;
-  padding: 30px 18px 20px;
+  width: 332px;
+  padding: 24px 22px 20px;
   overflow: hidden;
-  background: url('./assets/panel.svg') left top / 100% 100% no-repeat;
-  transform: translateX(-244px);
+  background: var(--panel);
+  border-right: 1px solid #3c3426;
+  border-radius: 0 12px 12px 0;
+  box-shadow: 12px 0 36px #0003;
+  transform: translateX(-336px);
   transition: transform var(--duration-drawer) var(--ease-main);
   user-select: none;
   touch-action: pan-y;
@@ -1689,11 +1717,12 @@ async function reset() {
 
 .panel-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid rgb(201 162 39 / 18%);
+  padding-bottom: 18px;
+  border-bottom: 1px solid #393226;
+  margin-bottom: 20px;
 }
 
 .panel-title {
@@ -1701,42 +1730,70 @@ async function reset() {
   align-items: center;
   gap: 6px;
   margin: 0;
-  color: #bdae8b;
-  font-family: var(--font-card);
-  font-size: 15px;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 19px;
   font-weight: 600;
-  letter-spacing: 3px;
-  text-shadow: 0 1px 3px black;
+  letter-spacing: 1px;
 }
 
 .panel-title .suit {
-  color: #d4b87a;
-  font-size: 14px;
+  color: var(--gold);
+  font-size: 17px;
   letter-spacing: 0;
-  text-shadow: 0 1px 2px black;
 }
 
 .panel-count {
-  color: #bdae8b;
-  font-size: 11px;
+  color: var(--muted);
+  font-size: 13px;
   white-space: nowrap;
+}
+
+/* 输入框：克制的纯色，去掉斜纹 */
+.settings-panel input {
+  min-width: 0;
+  width: 100%;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  outline: none;
+  font: inherit;
+  user-select: text;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.settings-panel input:focus {
+  border-color: var(--gold);
+  background: var(--surface-focus);
+}
+
+.add-input {
+  height: 40px;
+  margin-bottom: 20px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.add-input::placeholder {
+  color: #817765;
 }
 
 /* 列表表头与每一行共用同样的列宽，保证对齐 */
 .name-head,
 .name-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 46px 24px;
-  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) 62px 30px;
+  gap: 8px;
   align-items: center;
 }
 
 .name-head {
-  padding: 12px 2px 6px;
-  color: #bdae8b;
-  font-size: 10px;
-  letter-spacing: 2px;
-  opacity: 0.7;
+  padding: 0 4px 9px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .name-head .is-center {
@@ -1746,196 +1803,120 @@ async function reset() {
 .name-list {
   flex: 1;
   min-height: 0;
-  margin: 0 -6px;
-  padding: 0 6px 4px;
+  padding-right: 3px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
-.name-row {
-  margin-bottom: 8px;
-}
-
-.name-input,
-.weight-input {
-  height: 32px;
-  min-width: 0;
-  border: 0;
-  border-radius: 8px;
-  background:
-    repeating-linear-gradient(
-      45deg,
-      rgb(70 50 30 / 40%) 0px,
-      rgb(70 50 30 / 40%) 2px,
-      rgb(110 80 50 / 30%) 2px,
-      rgb(110 80 50 / 30%) 6px
-    ),
-    radial-gradient(circle at 20% 30%, #6b4f2e, #3b2b1a 85%);
-  color: #f7e9c3;
-  font: inherit;
-  font-size: 13px;
-  text-shadow: 0 1px 2px black;
-  caret-color: #f5d742;
-  outline: none;
-  box-shadow:
-    0 4px 7px -3px #0b1a12,
-    0 0 0 1px #7c6a4b inset,
-    0 0 0 2px #2d2418 inset;
-  transition: box-shadow 150ms ease;
-}
-
-.name-input {
-  padding: 0 8px;
-}
-
-.weight-input {
-  padding: 0 2px;
-  text-align: center;
-}
-
-.name-input:hover,
-.weight-input:hover {
-  box-shadow:
-    0 6px 10px -4px #0b1a12,
-    0 0 0 1px #b8a47a inset,
-    0 0 0 2px #3d2f1c inset;
-}
-
-.name-input:focus,
-.weight-input:focus {
-  box-shadow:
-    0 0 0 2px #f5d742,
-    0 0 12px rgb(245 215 66 / 50%),
-    0 0 0 1px #cabf9e inset;
-}
-
-.name-input::placeholder {
-  color: #bdae8b;
-  opacity: 0.7;
-  font-style: italic;
-}
-
-.settings-panel input {
-  user-select: text;
-}
-
-/* 细滚动条，贴合木质面板 */
 .name-list::-webkit-scrollbar {
-  width: 6px;
+  width: 4px;
 }
 
 .name-list::-webkit-scrollbar-thumb {
-  border-radius: 3px;
-  background: rgb(201 162 39 / 30%);
+  border-radius: 8px;
+  background: #51442c;
 }
 
 .name-list::-webkit-scrollbar-track {
   background: transparent;
 }
 
+.name-row {
+  margin-bottom: 8px;
+}
+
+.name-input {
+  height: 40px;
+  padding: 0 11px;
+  font-size: 14px;
+}
+
+.weight-input {
+  height: 40px;
+  padding: 0;
+  text-align: center;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 删除：默认安静，悬停才强调 */
 .row-remove {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
   padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: #c9a45c;
-  color: #0f0f0f;
-  font-size: 15px;
-  font-weight: 700;
+  color: #8c826e;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 19px;
   line-height: 1;
-  text-shadow: 0 1px 0 #e6d8b5;
-  box-shadow:
-    0 0 0 2px #3b2b1a,
-    0 2px 3px black;
   cursor: pointer;
   transition:
-    background 150ms ease,
-    transform 150ms ease;
+    color 160ms ease,
+    background 160ms ease,
+    border-color 160ms ease;
 }
 
 .row-remove:hover {
-  background: #e0b96b;
-  transform: translateY(-1px);
+  color: #e8b2a0;
+  background: #39251f;
+  border-color: #634036;
 }
 
-.row-remove:active {
-  transform: translateY(1px);
-}
-
+/* 底部操作 */
 .panel-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
+  display: grid;
+  flex: none;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding-top: 16px;
 }
 
-.panel-button {
-  flex: 1;
-  padding: 9px 10px;
-  border: 0;
-  border-radius: 9px;
-  background:
-    repeating-linear-gradient(
-      45deg,
-      rgb(70 50 30 / 40%) 0px,
-      rgb(70 50 30 / 40%) 2px,
-      rgb(110 80 50 / 30%) 2px,
-      rgb(110 80 50 / 30%) 6px
-    ),
-    radial-gradient(circle at 20% 30%, #6b4f2e, #3b2b1a 85%);
-  color: #f7e9c3;
+.btn {
+  height: 43px;
+  padding: 0 12px;
+  border-radius: 7px;
   font: inherit;
-  font-size: 13px;
-  letter-spacing: 1px;
-  text-shadow:
-    0 2px 3px rgb(0 0 0 / 50%),
-    0 1px 0 #3a2e1e;
-  box-shadow:
-    0 8px 12px -5px #0b1a12,
-    0 0 0 1px #7c6a4b inset,
-    0 0 0 2px #2d2418 inset;
+  font-size: 14px;
   cursor: pointer;
   transition:
-    transform 150ms ease,
-    box-shadow 150ms ease,
-    opacity 150ms ease;
+    background 160ms ease,
+    border-color 160ms ease,
+    opacity 160ms ease;
 }
 
-.panel-button:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow:
-    0 16px 20px -6px #0b1a12,
-    0 0 0 1px #b8a47a inset,
-    0 0 0 2px #3d2f1c inset;
+.btn-secondary {
+  color: var(--text);
+  background: transparent;
+  border: 1px solid #61543d;
 }
 
-.panel-button:active:not(:disabled) {
-  transform: translateY(2px);
-  box-shadow:
-    0 5px 8px -3px #0b1a12,
-    0 0 0 1px #7c6a4b inset,
-    0 0 0 2px #1f170e inset;
-  transition-duration: 0.05s;
+.btn-secondary:hover:not(:disabled) {
+  background: var(--surface-focus);
+  border-color: var(--gold);
 }
 
-.panel-button:disabled {
+.btn-primary {
+  color: #211b10;
+  background: var(--gold);
+  border: 1px solid var(--gold-light);
+  font-weight: 600;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #d9b875;
+}
+
+.btn:disabled {
   cursor: default;
   opacity: 0.55;
 }
 
-.panel-button.primary {
-  box-shadow:
-    0 8px 12px -5px #0b1a12,
-    0 0 0 1px #b8a47a inset,
-    0 0 0 2px #2d2418 inset,
-    0 0 14px rgb(245 215 66 / 18%);
-}
-
 .panel-message {
   margin: 10px 0 0;
-  color: #c9a227;
+  color: var(--gold);
   font-size: 12px;
   line-height: 1.5;
 }
